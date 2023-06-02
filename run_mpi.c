@@ -4,7 +4,7 @@
 # include <mpi.h>
 # include "neuron.h"
 
-# define N_NEURON 64
+# define N_NEURON 1024
 
 double **alloc_2d_double(int rows, int columns); // allocate memory for a 2d double array so that they are contiguous. 
 
@@ -18,8 +18,10 @@ double **alloc_2d_double(int rows, int columns){
 }
 
 int main(int argc, char *argv[]){
+    double start_time, end_time;
+
     int rank, n_process;
-    int n_steps = 10000; //number of time steps
+    int n_steps = 40000; //number of time steps
     double dt = 0.02; // time step used in the Euler method, the unit is ms
     int n_neuron_local; // number of neurons stored in this process
     double voltages[N_NEURON];
@@ -27,13 +29,13 @@ int main(int argc, char *argv[]){
     double **states; // a 2d array, each state of the neuron is ordered as [V, m, h, n]. The size of states is (n_neuron_local, 4).
     double *ext_Is; // external current that goes into each neuron (this is a sum of synaptic currents and driving currents (current from experimental devices)), the unit is nA. The size should be (n_neuron_local, )
 
-    int recorded_neuron_idx_list[] = {0, 1, 3, 5, 6, 9, 10, 30}; // a list of neurons whose voltages are to be recorded. 
+    int recorded_neuron_idx_list[] = {34,  171,  193,  214,  267,  270,  271,  321,  347,  358,  372, 387,  388,  420,  471,  504,  505,  515,  577,  636,  718,  735, 753,  761,  765,  776,  834,  838,  924,  974,  977, 1013}; // a list of neurons whose voltages are to be recorded. 
     int record_size = sizeof(recorded_neuron_idx_list) / sizeof(recorded_neuron_idx_list[0]);
     int record_size_local; // the number of neurons to be recorded within this rank. Note that since the voltage of all neurons will be available in each rank. The recorded neuron is not necessarily the neuron simulated in this rank. 
     int *recorded_neuron_idx_list_local; // a list of indicies that correspond to the recorded neurons. These indicies are global indicies, from 0 to N_NEURON-1. 
     double **voltage_record; // The size should be (record_size_local, n_steps)
 
-    int driven_neuron_idx_list[] = {0, 1}; // a list of neurons that are driven by driving currents. 
+    int driven_neuron_idx_list[] = {28,  77, 152, 351, 387, 405, 497, 516, 560, 589, 638, 669, 728, 763, 838, 992}; // a list of neurons that are driven by driving currents. 
     int n_driven_neuron = sizeof(driven_neuron_idx_list) / sizeof(driven_neuron_idx_list[0]);
     int n_driven_neruon_local; // the number of neurons that are have a driving current within the rank. 
     int *driven_neuron_idx_list_local; // a list of indicies that correspond to the driven neurons. The indices are local indicies, from 0 to n_neuron_local-1. (local_index + first_local_neuron_idx = global_index)
@@ -44,6 +46,8 @@ int main(int argc, char *argv[]){
     int *recv_counts; // an array of number of neurons in each rank. Used in MPI_Allgatherv operation to gather voltages. 
     int *displs; //used in MPI_Allgatherv, store the displacement of receive buffer for each vector received. 
     FILE *file;
+
+    start_time = MPI_Wtime(); 
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -114,7 +118,7 @@ int main(int argc, char *argv[]){
         recorded_neuron_idx_list_local[i] = recorded_neuron_idx_list[tmp_idx+i];
     }
     /*fill driven_neuron_idx_list_local and driving_currents*/
-    file = fopen("driving_currents.bin", "rb");
+    file = fopen("driving_currents_1024_16.bin", "rb");
     for (tmp_idx=0, i=0; tmp_idx<n_driven_neuron; tmp_idx++){
         if (driven_neuron_idx_list[tmp_idx]>=first_local_neuron_idx && driven_neuron_idx_list[tmp_idx]<first_local_neuron_idx+n_neuron_local) {
             driven_neuron_idx_list_local[i] = driven_neuron_idx_list[tmp_idx] - first_local_neuron_idx;
@@ -145,7 +149,8 @@ int main(int argc, char *argv[]){
         for (i=0; i<n_neuron_local; i++){ // sum the synaptic currents
             ext_Is[i] = 0.;
             for (j=0; j<N_NEURON; j++){
-                ext_Is[i] += log(1 + exp(w[i][j]*(voltages[j] - voltages[i+first_local_neuron_idx])));
+                // ext_Is[i] += log(1 + exp(w[i][j]*(voltages[j] - voltages[i+first_local_neuron_idx])));
+                ext_Is[i] += w[i][j]/(1 + exp(-(voltages[j] - voltages[i+first_local_neuron_idx])/20.));
             }
         }
 
@@ -165,6 +170,11 @@ int main(int argc, char *argv[]){
     fseek(file, sizeof(double)*tmp_idx*n_steps, SEEK_SET);
     fwrite(&voltage_record[0][0], sizeof(double), record_size_local*n_steps, file);
     fclose(file);
+
+    end_time = MPI_Wtime();
+    if (rank==0){
+        printf("Execution Time: %f seconds\n", end_time-start_time);
+    }
 
     /*free dynamically allocated memory*/
     free(w[0]); free(states[0]);
