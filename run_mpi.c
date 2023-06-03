@@ -37,7 +37,7 @@ int main(int argc, char *argv[]){
 
     int driven_neuron_idx_list[] = {28,  77, 152, 351, 387, 405, 497, 516, 560, 589, 638, 669, 728, 763, 838, 992}; // a list of neurons that are driven by driving currents. 
     int n_driven_neuron = sizeof(driven_neuron_idx_list) / sizeof(driven_neuron_idx_list[0]);
-    int n_driven_neruon_local; // the number of neurons that are have a driving current within the rank. 
+    int n_driven_neuron_local; // the number of neurons that are have a driving current within the rank. 
     int *driven_neuron_idx_list_local; // a list of indicies that correspond to the driven neurons. The indices are local indicies, from 0 to n_neuron_local-1. (local_index + first_local_neuron_idx = global_index)
     double **driving_currents; // the size is (n_driven_neuron_local, n_steps)
 
@@ -46,6 +46,7 @@ int main(int argc, char *argv[]){
     int *recv_counts; // an array of number of neurons in each rank. Used in MPI_Allgatherv operation to gather voltages. 
     int *displs; //used in MPI_Allgatherv, store the displacement of receive buffer for each vector received. 
     FILE *file;
+    MPI_File mpi_file; 
 
     start_time = MPI_Wtime(); 
 
@@ -63,10 +64,10 @@ int main(int argc, char *argv[]){
     record_size_local = record_size / n_process;
     if (rank<record_size%n_process) {record_size_local += 1;}
 
-    n_driven_neruon_local = 0;
+    n_driven_neuron_local = 0;
     for (i=0; i<n_driven_neuron; i++){
         if (driven_neuron_idx_list[i]>=first_local_neuron_idx && driven_neuron_idx_list[i]<first_local_neuron_idx+n_neuron_local){
-            n_driven_neruon_local += 1;
+            n_driven_neuron_local += 1;
         }
     }
 
@@ -83,9 +84,9 @@ int main(int argc, char *argv[]){
         voltage_record = alloc_2d_double(record_size_local, n_steps);
     }
     /*allocate memory for driven_neuron_idx_list_local and driving currents*/
-    if (n_driven_neruon_local>0){
-        driven_neuron_idx_list_local = (int *)malloc(n_driven_neruon_local*sizeof(int));
-        driving_currents = alloc_2d_double(n_driven_neruon_local, n_steps);
+    if (n_driven_neuron_local>0){
+        driven_neuron_idx_list_local = (int *)malloc(n_driven_neuron_local*sizeof(int));
+        driving_currents = alloc_2d_double(n_driven_neuron_local, n_steps);
     }
     /*allocate memory for recv_counts and displs*/
     recv_counts = (int *)malloc(n_process*sizeof(int));
@@ -93,20 +94,18 @@ int main(int argc, char *argv[]){
 /*-------------------------------------------------------------------------------------------------------*/
 
 /*------------------------------------arrays initialization---------------------------------------------*/
-    /*read w from file*/
-    file = fopen("weights.bin", "rb");
-    for (i=0; i<n_neuron_local; i++){
-        fseek(file, sizeof(double)*(i+first_local_neuron_idx)*N_NEURON, SEEK_SET);
-        fread(w[i], sizeof(double), N_NEURON, file);
-    }
-    fclose(file);
-    /*read states from file*/
-    file = fopen("initial_states.bin", "rb");
-    for (i=0; i<n_neuron_local; i++){
-        fseek(file, sizeof(double)*(i+first_local_neuron_idx)*4, SEEK_SET);
-        fread(states[i], sizeof(double), 4, file);
-    }
-    fclose(file);
+    double *ptr_w = &w[0][0];
+    MPI_File_open(MPI_COMM_WORLD, "weights.bin", MPI_MODE_RDONLY, MPI_INFO_NULL, &mpi_file);
+    MPI_File_set_view(mpi_file, sizeof(double)*first_local_neuron_idx*N_NEURON, MPI_DOUBLE, MPI_DOUBLE, "native", MPI_INFO_NULL);
+    MPI_File_read(mpi_file, ptr_w, n_neuron_local*N_NEURON, MPI_DOUBLE, MPI_STATUS_IGNORE);
+    MPI_File_close(&mpi_file);
+
+    double *ptr_states = &states[0][0];
+    MPI_File_open(MPI_COMM_WORLD, "initial_states.bin", MPI_MODE_RDONLY, MPI_INFO_NULL, &mpi_file);
+    MPI_File_set_view(mpi_file, sizeof(double)*first_local_neuron_idx*4, MPI_DOUBLE, MPI_DOUBLE, "native", MPI_INFO_NULL);
+    MPI_File_read(mpi_file, ptr_states, n_neuron_local*4, MPI_DOUBLE, MPI_STATUS_IGNORE);
+    MPI_File_close(&mpi_file);
+
     /*initialize ext_Is to all 0s*/
     for (i=0; i<n_neuron_local; i++){
         ext_Is[i] = 0.;
@@ -139,6 +138,7 @@ int main(int argc, char *argv[]){
     MPI_Type_vector(n_neuron_local, 1, 4, MPI_DOUBLE, &column_type);
     MPI_Type_commit(&column_type);
 /*------------------------------------run simulation---------------------------------------------*/
+
     for (int t=0; t<n_steps; t++){
         for (i=0; i<n_neuron_local; i++){ // use Euler method to move forward one time step
             neuron_euler(states[i], states[i], ext_Is[i], dt);
@@ -154,7 +154,7 @@ int main(int argc, char *argv[]){
             }
         }
 
-        for (i=0; i<n_driven_neruon_local; i++){ // add the driving current to ext_Is
+        for (i=0; i<n_driven_neuron_local; i++){ // add the driving current to ext_Is
             ext_Is[driven_neuron_idx_list_local[i]] += driving_currents[i][t];
         }
 
@@ -166,10 +166,14 @@ int main(int argc, char *argv[]){
     /*Write data to file*/
     if (rank<record_size%n_process) {tmp_idx = rank*record_size_local;}
     else {tmp_idx = record_size - (n_process-rank)*record_size_local;}
-    file = fopen("voltage_record_mpi.bin", "wb");
-    fseek(file, sizeof(double)*tmp_idx*n_steps, SEEK_SET);
-    fwrite(&voltage_record[0][0], sizeof(double), record_size_local*n_steps, file);
-    fclose(file);
+    MPI_File_open(MPI_COMM_WORLD, "voltage_record_mpi.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &mpi_file);
+    MPI_File_set_view(mpi_file, sizeof(double)*tmp_idx*n_steps, MPI_DOUBLE, MPI_DOUBLE, "native", MPI_INFO_NULL);
+    MPI_File_write(mpi_file, &voltage_record[0][0], record_size_local*n_steps, MPI_DOUBLE, MPI_STATUS_IGNORE); 
+    MPI_File_close(&mpi_file);
+    // file = fopen("voltage_record_mpi.bin", "wb");
+    // fseek(file, sizeof(double)*tmp_idx*n_steps, SEEK_SET);
+    // fwrite(&voltage_record[0][0], sizeof(double), record_size_local*n_steps, file);
+    // fclose(file);
 
     end_time = MPI_Wtime();
     if (rank==0){
@@ -180,7 +184,7 @@ int main(int argc, char *argv[]){
     free(w[0]); free(states[0]);
     free(w); free(states); free(ext_Is); free(recv_counts); free(displs);
     if (record_size_local>0) {free(voltage_record[0]); free(voltage_record); free(recorded_neuron_idx_list_local);}
-    if (n_driven_neruon_local>0) {free(driving_currents[0]); free(driving_currents); free(driven_neuron_idx_list_local);} 
+    if (n_driven_neuron_local>0) {free(driving_currents[0]); free(driving_currents); free(driven_neuron_idx_list_local);} 
 
     MPI_Finalize();
     return 0;
