@@ -21,7 +21,7 @@ int main(int argc, char *argv[]){
     double start_time, end_time;
 
     int rank, n_process;
-    int n_steps = 40000; //number of time steps
+    int n_steps = 20000; //number of time steps
     double dt = 0.02; // time step used in the Euler method, the unit is ms
     int n_neuron_local; // number of neurons stored in this process
     double voltages[N_NEURON];
@@ -29,13 +29,13 @@ int main(int argc, char *argv[]){
     double **states; // a 2d array, each state of the neuron is ordered as [V, m, h, n]. The size of states is (n_neuron_local, 4).
     double *ext_Is; // external current that goes into each neuron (this is a sum of synaptic currents and driving currents (current from experimental devices)), the unit is nA. The size should be (n_neuron_local, )
 
-    int recorded_neuron_idx_list[] = {34,  171,  193,  214,  267,  270,  271,  321,  347,  358,  372, 387,  388,  420,  471,  504,  505,  515,  577,  636,  718,  735, 753,  761,  765,  776,  834,  838,  924,  974,  977, 1013}; // a list of neurons whose voltages are to be recorded. 
+    int recorded_neuron_idx_list[] = {0, 46, 67, 69, 70, 72, 108, 117, 118, 135, 139, 147, 159, 178, 179, 202, 208, 215, 218, 219, 241, 243, 255, 295, 315, 342, 386, 396, 435, 445, 465, 472, 474, 508, 515, 553, 572, 574, 578, 614, 633, 653, 658, 659, 666, 668, 679, 702, 715, 736, 744, 763, 846, 852, 870, 892, 893, 923, 942, 966, 981, 982, 984, 1011}; // a list of neurons whose voltages are to be recorded. 
     int record_size = sizeof(recorded_neuron_idx_list) / sizeof(recorded_neuron_idx_list[0]);
     int record_size_local; // the number of neurons to be recorded within this rank. Note that since the voltage of all neurons will be available in each rank. The recorded neuron is not necessarily the neuron simulated in this rank. 
     int *recorded_neuron_idx_list_local; // a list of indicies that correspond to the recorded neurons. These indicies are global indicies, from 0 to N_NEURON-1. 
     double **voltage_record; // The size should be (record_size_local, n_steps)
 
-    int driven_neuron_idx_list[] = {28,  77, 152, 351, 387, 405, 497, 516, 560, 589, 638, 669, 728, 763, 838, 992}; // a list of neurons that are driven by driving currents. 
+    int driven_neuron_idx_list[] = {1, 50, 79, 94, 112, 164, 238, 247, 313, 344, 371, 406, 452, 481, 554, 557, 565, 640, 668, 681, 695, 725, 761, 778, 839, 866, 896, 937, 971, 986, 1006, 1012}; // a list of neurons that are driven by driving currents. 
     int n_driven_neuron = sizeof(driven_neuron_idx_list) / sizeof(driven_neuron_idx_list[0]);
     int n_driven_neuron_local; // the number of neurons that are have a driving current within the rank. 
     int *driven_neuron_idx_list_local; // a list of indicies that correspond to the driven neurons. The indices are local indicies, from 0 to n_neuron_local-1. (local_index + first_local_neuron_idx = global_index)
@@ -95,13 +95,13 @@ int main(int argc, char *argv[]){
 
 /*------------------------------------arrays initialization---------------------------------------------*/
     double *ptr_w = &w[0][0];
-    MPI_File_open(MPI_COMM_WORLD, "weights.bin", MPI_MODE_RDONLY, MPI_INFO_NULL, &mpi_file);
+    MPI_File_open(MPI_COMM_WORLD, "/expanse/lustre/scratch/fcai/temp_project/1024_32_64/weights_1024.bin", MPI_MODE_RDONLY, MPI_INFO_NULL, &mpi_file);
     MPI_File_set_view(mpi_file, sizeof(double)*first_local_neuron_idx*N_NEURON, MPI_DOUBLE, MPI_DOUBLE, "native", MPI_INFO_NULL);
     MPI_File_read(mpi_file, ptr_w, n_neuron_local*N_NEURON, MPI_DOUBLE, MPI_STATUS_IGNORE);
     MPI_File_close(&mpi_file);
 
     double *ptr_states = &states[0][0];
-    MPI_File_open(MPI_COMM_WORLD, "initial_states.bin", MPI_MODE_RDONLY, MPI_INFO_NULL, &mpi_file);
+    MPI_File_open(MPI_COMM_WORLD, "/expanse/lustre/scratch/fcai/temp_project/1024_32_64/initial_states_1024.bin", MPI_MODE_RDONLY, MPI_INFO_NULL, &mpi_file);
     MPI_File_set_view(mpi_file, sizeof(double)*first_local_neuron_idx*4, MPI_DOUBLE, MPI_DOUBLE, "native", MPI_INFO_NULL);
     MPI_File_read(mpi_file, ptr_states, n_neuron_local*4, MPI_DOUBLE, MPI_STATUS_IGNORE);
     MPI_File_close(&mpi_file);
@@ -117,7 +117,7 @@ int main(int argc, char *argv[]){
         recorded_neuron_idx_list_local[i] = recorded_neuron_idx_list[tmp_idx+i];
     }
     /*fill driven_neuron_idx_list_local and driving_currents*/
-    file = fopen("driving_currents_1024_16.bin", "rb");
+    file = fopen("/expanse/lustre/scratch/fcai/temp_project/1024_32_64/driving_currents_1024_32.bin", "rb");
     for (tmp_idx=0, i=0; tmp_idx<n_driven_neuron; tmp_idx++){
         if (driven_neuron_idx_list[tmp_idx]>=first_local_neuron_idx && driven_neuron_idx_list[tmp_idx]<first_local_neuron_idx+n_neuron_local) {
             driven_neuron_idx_list_local[i] = driven_neuron_idx_list[tmp_idx] - first_local_neuron_idx;
@@ -166,7 +166,7 @@ int main(int argc, char *argv[]){
     /*Write data to file*/
     if (rank<record_size%n_process) {tmp_idx = rank*record_size_local;}
     else {tmp_idx = record_size - (n_process-rank)*record_size_local;}
-    MPI_File_open(MPI_COMM_WORLD, "voltage_record_mpi.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &mpi_file);
+    MPI_File_open(MPI_COMM_WORLD, "/expanse/lustre/scratch/fcai/temp_project/1024_32_64/voltage_record_mpi.bin", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &mpi_file);
     MPI_File_set_view(mpi_file, sizeof(double)*tmp_idx*n_steps, MPI_DOUBLE, MPI_DOUBLE, "native", MPI_INFO_NULL);
     MPI_File_write(mpi_file, &voltage_record[0][0], record_size_local*n_steps, MPI_DOUBLE, MPI_STATUS_IGNORE); 
     MPI_File_close(&mpi_file);

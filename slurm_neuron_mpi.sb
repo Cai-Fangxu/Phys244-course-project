@@ -1,0 +1,26 @@
+#!/bin/bash
+#SBATCH --job-name="neuron_mpi"
+#SBATCH --output="output_log/neuron_mpi_4.out"
+#SBATCH --partition=compute
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=1
+#SBATCH --export=ALL
+#SBATCH -t 00:20:00
+#SBATCH -A csd759
+
+## Environment
+module purge
+module load slurm
+module load cpu/0.15.4
+module load gcc/10.2.0
+module load openmpi/4.0.4
+
+## Use srun to run the job
+
+mpicc run_mpi.c neuron.c -o run_mpi -lm
+for (( i=1; i<=5; i++ ))
+do
+    echo "--------------------iteration $i ------------------"
+    srun --mpi=pmi2 -n 4 --cpu-bind=rank ./run_mpi
+done

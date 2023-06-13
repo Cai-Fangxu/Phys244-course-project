@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH --job-name="neuron_openmp"
+#SBATCH --output="output_log/neuron_openmp_4.out"
+#SBATCH --partition=compute
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --export=ALL
+#SBATCH -t 00:20:00
+#SBATCH -A csd759
+
+# AOCC environment
+module purge
+module load slurm
+module load cpu/0.15.4
+module load aocc/2.2.0
+
+## Use srun to run the job
+gcc -fopenmp run_openmp.c neuron.c -o run_openmp -lm
+for (( i=1; i<=5; i++ ))
+do
+    echo "--------------------iteration $i ------------------"
+    ./run_openmp 4
+done
