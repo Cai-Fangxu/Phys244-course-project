@@ -8,7 +8,7 @@ The data to be read/written by the program is pre/post-processed by the jupyter 
 After running the jupyter notebook, to compile and run the code parallelized by OpenMP, run: 
 ``` bash
 gcc -fopenmp run_openmp.c neuron.c -o run_openmp -lm
-./run_openmp
+./run_openmp <num_threads>
 ```
 
 To compile and run the code parallelized by MPI, run:
@@ -20,7 +20,7 @@ mpirun -np <num_processes> ./run_mpi
 To compile and run the code parallelized by MPI + OpenMp, run:
 ```bash
 mpicc -fopenmp run_mpi_openmp.c neuron.c -o run_mpi_openmp -lm
-mpirun -np <num_processes> ./run_mpi_openmp
+mpirun -np <num_processes> ./run_mpi_openmp <num_threads>
 ```
 
 The voltage data of recorded neurons can be read and plot by the jupyter notebook. 
